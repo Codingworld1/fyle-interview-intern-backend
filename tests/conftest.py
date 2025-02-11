@@ -1,7 +1,8 @@
 import pytest
 import json
 from tests import app
-
+from core import db
+from core.models.assignments import Assignment
 
 @pytest.fixture
 def client():

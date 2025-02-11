@@ -5,8 +5,8 @@ from core.libs import helpers, assertions
 from core.models.teachers import Teacher
 from core.models.students import Student
 from sqlalchemy.types import Enum as BaseEnum
-
-
+from core.libs.exceptions import FyleError
+from flask import abort, jsonify
 class GradeEnum(str, enum.Enum):
     A = 'A'
     B = 'B'
@@ -48,8 +48,7 @@ class Assignment(db.Model):
         if assignment_new.id is not None:
             assignment = Assignment.get_by_id(assignment_new.id)
             assertions.assert_found(assignment, 'No assignment with this id was found')
-            assertions.assert_valid(assignment.state == AssignmentStateEnum.DRAFT,
-                                    'only assignment in draft state can be edited')
+            assertions.assert_valid(assignment.state == AssignmentStateEnum.DRAFT,'only assignment in draft state can be edited')
 
             assignment.content = assignment_new.content
         else:
@@ -61,36 +60,55 @@ class Assignment(db.Model):
 
     @classmethod
     def submit(cls, _id, teacher_id, auth_principal: AuthPrincipal):
-        assignment = Assignment.get_by_id(_id)
+        assignment = Assignment.get_by_id(_id) 
+
+        print(f"DEBUG: Found assignment with ID {_id}, state: {assignment.state}")
+
         assertions.assert_found(assignment, 'No assignment with this id was found')
         assertions.assert_valid(assignment.student_id == auth_principal.student_id, 'This assignment belongs to some other student')
-        assertions.assert_valid(assignment.content is not None, 'assignment with empty content cannot be submitted')
+        assertions.assert_valid(assignment.content is not None, 'Assignment with empty content cannot be submitted')
 
+        if assignment.state != AssignmentStateEnum.DRAFT:
+            print("DEBUG: Assignment is not in DRAFT state, raising error.")
+            raise FyleError(400, 'only a draft assignment can be submitted')
+
+        print("DEBUG: Assignment is in DRAFT state. Proceeding with submission.")
+        
+        assignment.state = AssignmentStateEnum.SUBMITTED
         assignment.teacher_id = teacher_id
-        db.session.flush()
+        db.session.commit()
+
+        print(f"DEBUG: Assignment submitted successfully with teacher_id: {teacher_id}")
 
         return assignment
+
 
 
     @classmethod
     def mark_grade(cls, _id, grade, auth_principal: AuthPrincipal):
         assignment = Assignment.get_by_id(_id)
-        assertions.assert_found(assignment, 'No assignment with this id was found')
+        if not assignment:
+            abort(404, description="Assignment not found")
         assertions.assert_valid(grade is not None, 'assignment with empty grade cannot be graded')
-
+        if assignment.state==AssignmentStateEnum.DRAFT:
+            abort(400, description="Cannot grade an assignment in DRAFT state")
         assignment.grade = grade
         assignment.state = AssignmentStateEnum.GRADED
         db.session.flush()
 
         return assignment
 
+
     @classmethod
     def get_assignments_by_student(cls, student_id):
         return cls.filter(cls.student_id == student_id).all()
 
     @classmethod
-    def get_assignments_by_teacher(cls):
-        return cls.query.all()
+    def get_assignments_by_teacher(cls, teacher_id):
+        return cls.query.filter(
+        cls.teacher_id == teacher_id,
+        cls.state.in_(["SUBMITTED", "GRADED"])  # Exclude DRAFT
+    ).all()
 
     @classmethod
     def get_assignments_by_principal(cls):

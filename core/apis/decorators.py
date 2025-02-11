@@ -1,8 +1,9 @@
 import json
-from flask import request
+from flask import request, jsonify
 from core.libs import assertions
 from functools import wraps
-
+from core.models.teachers import Teacher
+from core import db
 
 class AuthPrincipal:
     def __init__(self, user_id, student_id=None, teacher_id=None, principal_id=None):
@@ -44,3 +45,29 @@ def authenticate_principal(func):
 
         return func(p, *args, **kwargs)
     return wrapper
+def authenticate_teacher(f):
+    """Decorator to authenticate teachers"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        principal_header = request.headers.get("X-Principal")
+        if not principal_header:
+            return jsonify({"error": "Unauthorized", "message": "Missing authentication header"}), 401
+
+        try:
+            principal = json.loads(principal_header)  # Parse JSON
+            teacher_id = principal.get("teacher_id")
+
+            if not teacher_id:
+                return jsonify({"error": "Unauthorized", "message": "Invalid credentials"}), 401
+
+            teacher = db.session.get(Teacher, teacher_id)  # Corrected SQLAlchemy call
+
+            if not teacher:
+                return jsonify({"error": "Unauthorized", "message": "Teacher not found"}), 403
+
+        except Exception as e:
+            return jsonify({"error": "Invalid request", "message": str(e)}), 400
+
+        return f(teacher, *args, **kwargs)
+
+    return decorated_function
